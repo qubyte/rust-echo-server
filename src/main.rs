@@ -23,7 +23,9 @@ struct Greet {
 
 // Simple text response to a GET.
 fn handle_root() -> BoxFut {
-    Box::new(future::ok(Response::new(Body::from("Try POSTing data to /echo"))))
+    let response = Response::new(Body::from("Try POSTing data to /echo"));
+
+    Box::new(future::ok(response))
 }
 
 // Streams the POST request body to the response.
@@ -43,7 +45,9 @@ fn handle_uppercase(req: Request<Body>) -> BoxFut {
                 .collect::<Vec<u8>>()
         });
 
-    Box::new(future::ok(Response::new(Body::wrap_stream(mapping))))
+    let response = Response::new(Body::wrap_stream(mapping));
+
+    Box::new(future::ok(response))
 }
 
 // Buffers the POST request body, and reverses it into the response.
@@ -72,20 +76,21 @@ fn handle_json(req: Request<Body>) -> BoxFut {
         .concat2();
 
     let response = concatenated.and_then(|body| {
-        let mut response = Response::new(Body::from(""));
         let object: serde_json::Result<Greet> = serde_json::from_slice(&body);
 
-        match object {
+        let wrapped_response = match object {
             Ok(greet) => {
-                *response.body_mut() = Body::from(serde_json::to_string_pretty(&greet).unwrap());
+                Response::builder()
+                    .body(Body::from(serde_json::to_string_pretty(&greet).unwrap()))
             },
             Err(e) => {
-                *response.status_mut() = StatusCode::BAD_REQUEST;
-                *response.body_mut() = Body::from(format!("JSON parsing error: {}!", e));
+                Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Body::from(format!("JSON parsing error: {}!", e)))
             }
         };
 
-        Ok(response)
+        Ok(wrapped_response.unwrap())
     });
 
     Box::new(response)
