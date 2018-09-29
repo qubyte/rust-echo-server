@@ -15,7 +15,7 @@ extern crate serde_json;
 
 type BoxFut = Box<Future<Item=Response<Body>, Error=hyper::Error> + Send>;
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Greet {
     name: String,
     greeting: String
@@ -28,7 +28,9 @@ fn handle_root() -> BoxFut {
 
 // Streams the POST request body to the response.
 fn handle_echo(req: Request<Body>) -> BoxFut {
-    Box::new(future::ok(Response::new(Body::from(req.into_body()))))
+    let response = Response::new(Body::from(req.into_body()));
+
+    Box::new(future::ok(response))
 }
 
 // Maps the POST request body stream to uppercase, then to the response.
@@ -46,47 +48,56 @@ fn handle_uppercase(req: Request<Body>) -> BoxFut {
 
 // Buffers the POST request body, and reverses it into the response.
 fn handle_reverse(req: Request<Body>) -> BoxFut {
-    let reversed = req
+    let concatenated = req
         .into_body()
-        .concat2()
-        .map(move |chunk| {
-            let body = chunk.iter()
-                .rev()
-                .cloned()
-                .collect::<Vec<u8>>(); // ascii only
+        .concat2();
 
-            Response::new(Body::from(body))
-        });
+    let response = concatenated.and_then(|chunk| {
+        let body = chunk.iter()
+            .rev()
+            .cloned()  // WHY?
+            .collect::<Vec<u8>>(); // ascii only
+
+        Ok(Response::new(Body::from(body)))
+    });
 
     // We're directly returning a boxed future here to avoid falling
     // through to the synchronous response handler at the bottom.
-    Box::new(reversed)
+    Box::new(response)
 }
 
 fn handle_json(req: Request<Body>) -> BoxFut {
-    let json = req
+    let concatenated = req
         .into_body()
-        .concat2()
-        .and_then(|body| {
-            let mut response = Response::new(Body::from(""));
-            let object: serde_json::Result<Greet> = serde_json::from_slice(&body);
-            println!("{:?}", object);
+        .concat2();
 
-            match object {
-                Ok(greet) => *response.body_mut() = Body::from(body),
-                Err(e) => *response.status_mut() = StatusCode::BAD_REQUEST,
-            };
+    let response = concatenated.and_then(|body| {
+        let mut response = Response::new(Body::from(""));
+        let object: serde_json::Result<Greet> = serde_json::from_slice(&body);
 
-            Ok(response)
-        });
+        match object {
+            Ok(greet) => {
+                *response.body_mut() = Body::from(serde_json::to_string_pretty(&greet).unwrap());
+            },
+            Err(e) => {
+                *response.status_mut() = StatusCode::BAD_REQUEST;
+                *response.body_mut() = Body::from(format!("JSON parsing error: {}!", e));
+            }
+        };
 
-    Box::new(json)
+        Ok(response)
+    });
+
+    Box::new(response)
 }
 
 // 404. Probably a better way of doing this.
 fn handle_not_found() -> BoxFut {
-    let mut response = Response::new(Body::empty());
-    *response.status_mut() = StatusCode::NOT_FOUND;
+    let response = Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::empty())
+        .unwrap();
+
     Box::new(future::ok(response))
 }
 
